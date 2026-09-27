@@ -3,6 +3,8 @@
 import pytest
 import torch
 
+from vllm.model_executor.layers.quantization.auto_awq import AutoAWQConfig
+from vllm.model_executor.layers.quantization.auto_gptq import AutoGPTQConfig
 from vllm.model_executor.models.minicpmv import MiniCPMV2_6
 from vllm.model_executor.models.minicpmv4_6 import (
     MiniCPMV4_6ForConditionalGeneration,
@@ -54,3 +56,54 @@ def test_image_and_video_embeds_stay_in_their_own_modality():
 
     assert torch.equal(modalities["images"]["image_embeds"], image_embeds)
     assert torch.equal(modalities["videos"]["image_embeds"], video_embeds)
+
+
+# `quantization_config` from openbmb/MiniCPM-V-4.6-{,Thinking-}{GPTQ,AWQ}, which all
+# store the vision tower in bf16. Neither exclusion list matches it under vLLM's
+# names: GPTQ's entries are block-relative and also hit `vpm.*`, and AWQ's
+# `model.vision_tower` is not renamed to `vpm` by `hf_to_vllm_mapper`.
+@pytest.mark.parametrize(
+    "quant_config",
+    [
+        AutoGPTQConfig.from_config(
+            {
+                "bits": 4,
+                "group_size": 128,
+                "damp_percent": 0.01,
+                "desc_act": False,
+                "static_groups": False,
+                "sym": True,
+                "true_sequential": True,
+                "quant_method": "gptq",
+                "checkpoint_format": "gptq",
+                "modules_in_block_to_quantize": [
+                    ["self_attn.q_proj", "self_attn.k_proj", "self_attn.v_proj"],
+                    ["self_attn.o_proj"],
+                    ["linear_attn.in_proj_qkv", "linear_attn.in_proj_z"],
+                    ["linear_attn.out_proj"],
+                    ["mlp.gate_proj", "mlp.up_proj"],
+                    ["mlp.down_proj"],
+                ],
+            }
+        ),
+        AutoAWQConfig.from_config(
+            {
+                "bits": 4,
+                "group_size": 128,
+                "modules_to_not_convert": [
+                    "in_proj_b",
+                    "in_proj_a",
+                    "model.vision_tower",
+                    "model.merger",
+                    "lm_head",
+                ],
+                "quant_method": "awq",
+                "version": "gemm",
+                "zero_point": True,
+            }
+        ),
+    ],
+    ids=["gptq", "awq"],
+)
+def test_4_6_vision_tower_skips_checkpoint_quantization(quant_config):
+    assert make_model_4_6()._maybe_ignore_quant_config(quant_config) is None

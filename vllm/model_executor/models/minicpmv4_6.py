@@ -25,6 +25,8 @@ from vllm.model_executor.layers.mamba.mamba_utils import (
     MambaStateShapeCalculator,
 )
 from vllm.model_executor.layers.quantization import QuantizationConfig
+from vllm.model_executor.layers.quantization.auto_awq import AutoAWQConfig
+from vllm.model_executor.layers.quantization.auto_gptq import AutoGPTQConfig
 from vllm.multimodal import MULTIMODAL_REGISTRY
 from vllm.multimodal.inputs import (
     MultiModalFeatureSpec,
@@ -1027,7 +1029,7 @@ class MiniCPMV4_6ForConditionalGeneration(
         with self._mark_tower_model(vllm_config, {"image"}):
             self.vpm = Idefics2VisionTransformer(
                 config.vision_config,
-                quant_config=quant_config,
+                quant_config=self._maybe_ignore_quant_config(quant_config),
                 apply_encoder_attention_mask=True,
                 prefix=maybe_prefix(prefix, "vpm"),
             )
@@ -1036,7 +1038,7 @@ class MiniCPMV4_6ForConditionalGeneration(
 
             self.vit_merger = MiniCPMV4_6ViTWindowAttentionMerger(
                 config.vision_config,
-                quant_config=quant_config,
+                quant_config=self._maybe_ignore_quant_config(quant_config),
                 prefix=maybe_prefix(prefix, "vit_merger"),
             )
             self.merger = MiniCPMV4_6Merger(
@@ -1061,6 +1063,13 @@ class MiniCPMV4_6ForConditionalGeneration(
         self.make_empty_intermediate_tensors = (
             self.language_model.make_empty_intermediate_tensors
         )
+
+    def _maybe_ignore_quant_config(
+        self, quant_config: QuantizationConfig | None
+    ) -> QuantizationConfig | None:
+        if isinstance(quant_config, (AutoAWQConfig, AutoGPTQConfig)):
+            return None
+        return quant_config
 
     # ----- Multimodal parsing -----
 
